@@ -1,0 +1,13 @@
+title = "Yui-bilibili secret scanning"
+
+[extend]
+useDefault = true
+
+# Only this exact, visibly synthetic refresh token in this one test is allowed.
+# Do not allowlist entire tests/, generic-api-key, or all credential literals.
+[[allowlists]]
+description = "Synthetic repeating hexadecimal refresh token in account regression"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^0123456789abcdef0123456789abcdef$''']
+paths = ['''(^|/)tests/account\.test\.ts$''']

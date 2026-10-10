@@ -1,0 +1,56 @@
+# Local environment / agent state (keep only the public variable reference)
+.env
+.env.*
+!.env.example
+.pi/
+.scratch/
+
+# Private runtime data. Custom DATA_DIR should live outside the repository.
+data/
+backups/
+logs/
+**/*credential*.json*
+**/*session*.json*
+**/*cookie*.json*
+**/*token*.json*
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db-*
+*.dump
+*.bak
+*.backup
+
+# Keys, browser captures and login QR images (never publish these)
+*.pem
+*.key
+*.p12
+*.pfx
+*.har
+gitleaks-report*.json
+gitleaks-report*.sarif
+qrcode*.png
+qr-code*.png
+
+# Dependencies and generated output
+.venv/
+venv/
+node_modules/
+dist/
+build/
+build-server/
+coverage/
+__pycache__/
+*.py[cod]
+*.tsbuildinfo
+*.log
+
+# Local OS / editor scratch files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+reply.md
+pr-body.md

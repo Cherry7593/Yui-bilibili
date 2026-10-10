@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12']
+    env:
+      BILIBILI_WRITES_ENABLED: 'false'
+      PYTHON: .venv/bin/python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip check
+      - name: Node regression tests
+        # runner 上下文不可用于 job 级 env，故这两个变量放在 step 级。
+        env:
+          DATA_DIR: ${{ runner.temp }}/yui-data
+          BILI_CREDENTIAL_FILE: ${{ runner.temp }}/yui-data/config/bili_credential.json
+        run: npm test
+      - name: Python bridge regression tests
+        env:
+          DATA_DIR: ${{ runner.temp }}/yui-data
+          BILI_CREDENTIAL_FILE: ${{ runner.temp }}/yui-data/config/bili_credential.json
+        run: .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
