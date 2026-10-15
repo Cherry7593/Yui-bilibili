@@ -141,7 +141,8 @@ async def bili_comments(bvid: str, num: int = 30) -> str:
         control = item.get("reply_control")
         member = item.get("member") or {}
         pinned = item.get("rpid") in pinned_ids or bool((control or {}).get("is_up_top")) or bool(item.get("is_top"))
-        comments.append({"rpid": item.get("rpid", 0), "user": member.get("uname", ""), "uid": str(member.get("mid", "")), "content": (item.get("content") or {}).get("message", ""), "pinned": pinned, "ordinary": isinstance(control, dict) and item.get("root", 0) == 0 and not pinned})
+        # A missing like count stays null so the Node side drops the row instead of guessing 0.
+        comments.append({"rpid": item.get("rpid", 0), "user": member.get("uname", ""), "uid": str(member.get("mid", "")), "content": (item.get("content") or {}).get("message", ""), "like": item.get("like"), "pinned": pinned, "ordinary": isinstance(control, dict) and item.get("root", 0) == 0 and not pinned})
     return json.dumps({"comments": comments}, ensure_ascii=False)
 
 

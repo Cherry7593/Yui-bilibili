@@ -89,7 +89,7 @@ test('saved DeepSeek and SiliconFlow root shapes judge content with JSON mode an
     assert.equal((await f.app.inject({ method: 'PUT', url: '/api/ai/settings', payload: { baseUrl: p.base + root, model, apiKey: key } })).statusCode, 200);
     assert.equal((await f.app.inject({ method: 'POST', url: '/api/topics', payload: { name: '测试频道', keywords: ['建筑'], enabled: true, aiJudgment: true } })).statusCode, 200);
     await f.scheduler.run(); await f.scheduler.tick();
-    assert.equal(f.store.nextQueue(now + 3600000)?.action, 'comment');
+    assert.equal(f.store.nextQueue(now + 3600000)?.action, 'reply');
     assert.equal(f.store.activity('judge')[0].content, '适合温和交流');
     assert.equal(p.requests[0].url, endpoint); assert.equal(p.requests[0].authorization, `Bearer ${key}`);
     assert.equal(p.requests[0].body.model, model); assert.deepEqual(p.requests[0].body.response_format, { type: 'json_object' });

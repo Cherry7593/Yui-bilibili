@@ -11,16 +11,6 @@ export function safeAiText(text: string, maxLength = 120): boolean {
   return !!normalized && text.length <= maxLength && /\p{L}/u.test(normalized)
     && !/[\p{Cc}\p{Cf}]/u.test(normalized) && !credentialPattern.test(normalized) && !domainPattern.test(normalized) && !unsafePattern.test(normalized);
 }
-// Names what tripped the gate without echoing model text: short lexicon words verbatim, otherwise a category.
-export function gateHit(text: string): string {
-  const normalized = text.normalize('NFKC').trim();
-  if (credentialPattern.test(normalized)) return '疑似凭据';
-  if (domainPattern.test(normalized)) return '链接或域名';
-  const word = normalized.match(unsafePattern)?.[0];
-  if (!word) return '不符合格式的内容';
-  if (/^[\p{Script=Han}a-z ]{1,8}$/iu.test(word)) return `「${word}」`;
-  return /[\d@:/.+]/.test(word) ? '链接、号码或联系方式' : '敏感内容';
-}
 export function aiReplyCandidate(comment: OrdinaryComment, ownUid?: string): boolean {
   return !!ownUid && !!comment.uid && comment.uid !== ownUid && comment.ordinary && !comment.pinned
     && Number.isSafeInteger(comment.rpid) && comment.rpid > 0 && safeAiText(comment.content, 300);
@@ -38,13 +28,12 @@ export function chatCompletionsUrl(base: string): URL {
 export class AiFailure extends Error {
   constructor(reason = '模型调用失败或输出无效，已跳过') { super(reason); }
 }
-// The model answered, but the local gate rejected it; not a model or provider failure.
-export class AiLocalCheck extends AiFailure {}
 // Extra decision fields (models sometimes add a draft comment) are dropped, never shown or sent.
-const decisionSchema = z.object({ action: z.enum(['skip', 'comment', 'reply', 'uncertain']), reason: z.string().trim().min(1).max(80) });
+// comment / reply are older answer shapes; like interact they only mean "interact", the channel picks how.
+const decisionSchema = z.object({ action: z.enum(['skip', 'interact', 'comment', 'reply', 'uncertain']), reason: z.string().trim().min(1).max(80) });
 const writingSchema = z.object({ text: z.string().trim().min(1).max(120), rpid: z.number().int().nonnegative() }).strict();
 const envelopeSchema = z.object({ choices: z.array(z.object({ finish_reason: z.string().nullable(), message: z.object({ content: z.string().max(4096) }) })).length(1) });
-export type AiDecision = { action: 'skip' | 'comment' | 'reply'; reason: string };
+export type AiDecision = { action: 'skip' | 'interact'; reason: string };
 export type AiWriting = z.infer<typeof writingSchema>;
 export interface PatrolAi {
   assertConfigured(): void;
@@ -120,18 +109,16 @@ export class OpenAiPatrol implements PatrolAi {
     return decoded;
   }
   async judge(topic: Topic, video: Video, keyword: string): Promise<AiDecision> {
-    const result = decisionSchema.safeParse(await this.request('判断是否适合温和互动。只返回 action 和 reason 两个字段：{"action":"skip|comment|reply|uncertain","reason":"一句中文原因，不超过80字"}。comment 是评视频，reply 是回普通评论。信息不足、敏感、广告或不确定时 action 为 skip 或 uncertain。此时不要撰写评论，也不要附带其他字段。', this.context(topic, video, keyword)));
+    const result = decisionSchema.safeParse(await this.request('判断是否适合温和互动。只返回 action 和 reason 两个字段：{"action":"skip|interact|uncertain","reason":"一句中文原因，不超过80字"}。interact 表示适合互动，具体互动方式由频道设置决定，你不用选择。信息不足、敏感、广告或不确定时 action 为 skip 或 uncertain。此时不要撰写评论，也不要附带其他字段。', this.context(topic, video, keyword)));
     if (!result.success) throw new AiFailure('判断结果格式不符，已跳过');
-    const action = result.data.action === 'uncertain' ? 'skip' : result.data.action;
-    // The reason is shown only in local Activity. The outgoing-text gate must not turn a correct skip into a
-    // failure; a comment/reply whose reason trips it stays conservative and is skipped.
-    if (safeAiText(result.data.reason, 80)) return { action, reason: result.data.reason };
-    const hit = gateHit(result.data.reason);
-    if (action === 'skip') return { action, reason: `原因含${hit}，已隐藏` };
-    throw new AiLocalCheck(`判断原因含${hit}，按跳过处理`);
+    const action = result.data.action === 'skip' || result.data.action === 'uncertain' ? 'skip' : 'interact';
+    // The reason is only shown in local Activity and never sent, so the outgoing-text gate does not apply; a
+    // reason such as "无广告" must not flip a decision. request() has already rejected credential echoes.
+    const reason = result.data.reason.replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
+    return { action, reason: reason || '（原因不可显示）' };
   }
   async write(topic: Topic, video: Video, keyword: string, candidates: OrdinaryComment[]): Promise<AiWriting> {
-    const result = writingSchema.safeParse(await this.request('现在才撰写一句温和短评，不超过120字，按可选风格，不添加事实。返回 {"text":"短评","rpid":0}；有候选评论时只能从候选中选择一条 rpid 并写针对它的回复。没有合适候选或拿不准时返回 {"text":"","rpid":0}，本地将跳过。不写链接、联系方式、广告。', { ...this.context(topic, video, keyword), style: topic.style, candidates: candidates.map(c => ({ rpid: c.rpid, content: c.content })) }));
+    const result = writingSchema.safeParse(await this.request('现在才撰写一句温和短评，不超过120字，按可选风格，不添加事实。返回 {"text":"短评","rpid":0}；有候选评论时只能从候选中选择一条 rpid 并写针对它的回复；候选按点赞数 like 降序，同样合适时优先点赞高的。没有合适候选或拿不准时返回 {"text":"","rpid":0}，本地将跳过。不写链接、联系方式、广告。', { ...this.context(topic, video, keyword), style: topic.style, candidates: candidates.map(c => ({ rpid: c.rpid, content: c.content, like: c.like })) }));
     if (!result.success || !safeAiText(result.data.text) || (candidates.length ? !candidates.some(c => c.rpid === result.data.rpid) : result.data.rpid !== 0)) throw new AiFailure('AI 撰写未通过本地检查，已跳过');
     return result.data;
   }

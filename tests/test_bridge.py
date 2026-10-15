@@ -121,6 +121,19 @@ class BridgeBehavior(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["error_type"], "risk")
             self.assertNotIn("comments", result)
 
+    async def test_comments_carry_like_counts_and_leave_missing_counts_null(self):
+        class FakeVideo:
+            async def get_info(self):
+                return {"aid": 1}
+        response = {"replies": [
+            {"rpid": 11, "root": 0, "like": 320, "member": {"uname": "高赞", "mid": 201}, "content": {"message": "讲得很清楚"}, "reply_control": {}},
+            {"rpid": 12, "root": 0, "member": {"uname": "缺赞数", "mid": 202}, "content": {"message": "学到了"}, "reply_control": {}},
+        ]}
+        with patch.object(bridge.upstream, "get_cred", return_value=object()), patch.object(bridge.video, "Video", return_value=FakeVideo()), patch.object(bridge.comment, "get_comments", new=AsyncMock(return_value=response)) as read:
+            result = json.loads(await bridge.guarded("bili_comments", bridge.bili_comments)("BV1000000001"))
+            self.assertEqual(read.await_args.kwargs["order"], bridge.comment.OrderType.LIKE)
+            self.assertEqual([(c["rpid"], c["like"], c["ordinary"]) for c in result["comments"]], [(11, 320, True), (12, None, True)])
+
     async def test_http_rejections_propagate_risk_for_typed_and_upstream_string_errors(self):
         for status, kind in ((403, "risk"), (412, "risk"), (500, "api")):
             with self.subTest(status=status, path="typed"):
