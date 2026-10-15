@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { Store, STARTUP_PAUSE } from './store.js';
-import { BiliError, dayStart, defaultMinPlay, safeComment, videoSchema } from './model.js';
+import { BiliError, dayStart, defaultMinPlay, videoSchema } from './model.js';
 import type { Bilibili, Topic, TopicConfig, Video, Activity, Template, OrdinaryComment } from './model.js';
-import { AiConfigError, AiFailure, AiLocalCheck, OpenAiPatrol, aiReplyCandidate, safeAiText } from './ai.js';
+import { AiConfigError, AiFailure, OpenAiPatrol, aiReplyCandidate, safeAiText } from './ai.js';
 import type { PatrolAi } from './ai.js';
 function eligible(video: Video, topic: TopicConfig, now: number) {
   const published = video.pubdate * 1000;
@@ -162,15 +162,15 @@ export class Scheduler {
           const decision = await this.ai.judge(currentTopic, video, keyword);
           const latestTopic = this.store.topic(topic.id);
           if (!this.live(generation) || !latestTopic?.enabled || this.topicAiError(latestTopic)) return;
-          this.log(currentTopic, 'judge', `AI 判断：${{ skip: '跳过', comment: '评视频', reply: '回评论' }[decision.action]}`, { ...details, content: decision.reason });
+          this.log(currentTopic, 'judge', `AI 判断：${decision.action === 'skip' ? '跳过' : '互动'}`, { ...details, content: decision.reason });
           if (decision.action === 'skip') this.log(currentTopic, 'skip', 'AI 判断跳过', { ...details, content: decision.reason });
           else if (latestTopic.aiJudgment && eligible(video, latestTopic, this.clock())) {
-            this.store.queue(video.bvid, topic.id, decision.action, this.clock() + this.wait(limits.waitMin, limits.waitMax));
-            this.log(currentTopic, 'queue', '等待互动', { ...details, content: decision.action === 'comment' ? '视频评论' : '回复普通评论' });
+            this.store.queue(video.bvid, topic.id, latestTopic.aiInteraction, this.clock() + this.wait(limits.waitMin, limits.waitMax));
+            this.log(currentTopic, 'queue', '等待互动', { ...details, content: latestTopic.aiInteraction === 'comment' ? '视频评论' : '回复高赞评论' });
           }
         } catch (error) {
           this.log(currentTopic, 'judge', 'AI 判断：跳过', { ...details, content: error instanceof AiFailure ? error.message : '模型调用失败，已跳过' });
-          this.log(currentTopic, 'skip', error instanceof AiLocalCheck ? 'AI 判断原因未通过本地检查，已跳过' : 'AI 判断失败，已跳过', details);
+          this.log(currentTopic, 'skip', 'AI 判断失败，已跳过', details);
         }
         continue;
       }
@@ -179,7 +179,7 @@ export class Scheduler {
       else {
         const action = roll < currentTopic.skipProbability + currentTopic.commentProbability ? 'comment' : 'reply';
         this.store.queue(video.bvid,topic.id,action,now + this.wait(limits.waitMin,limits.waitMax));
-        this.log(currentTopic,'queue','等待互动',{ ...details, content: action === 'comment' ? '视频评论' : '回复普通评论' });
+        this.log(currentTopic,'queue','等待互动',{ ...details, content: action === 'comment' ? '视频评论' : '回复高赞评论' });
       }
     }
   }
@@ -198,9 +198,13 @@ export class Scheduler {
       this.store.db.prepare("UPDATE interactions SET state='skipped' WHERE id=?").run(item.id);
       this.log(topic,'skip','排队后视频不再满足热度或时间窗',details); return;
     }
-    const limit = item.action === 'comment' ? s.limits.dailyComment : s.limits.dailyReply;
-    const topicLimit = item.action === 'comment' ? topic.dailyComment : topic.dailyReply;
-    if (this.store.attemptCount(now) >= s.limits.dailyTotal || this.store.attemptCount(now,undefined,item.action) >= limit || this.store.attemptCount(now,topic.id,item.action) >= topicLimit) {
+    // An AI queue entry only records "interact"; the channel's current interaction mode decides how, and the row
+    // is updated before any quota check so attempts are counted under the action actually performed.
+    const action = topic.aiJudgment ? topic.aiInteraction : item.action;
+    if (action !== item.action) this.store.db.prepare("UPDATE interactions SET action=? WHERE id=? AND state='queued'").run(action,item.id);
+    const limit = action === 'comment' ? s.limits.dailyComment : s.limits.dailyReply;
+    const topicLimit = action === 'comment' ? topic.dailyComment : topic.dailyReply;
+    if (this.store.attemptCount(now) >= s.limits.dailyTotal || this.store.attemptCount(now,undefined,action) >= limit || this.store.attemptCount(now,topic.id,action) >= topicLimit) {
       this.store.db.prepare('UPDATE interactions SET due=? WHERE id=?').run(dayStart(now)+86400000+this.wait(s.limits.waitMin,s.limits.waitMax),item.id); return;
     }
     const skip = (reason: string) => {
@@ -211,29 +215,33 @@ export class Scheduler {
     let template: Template | undefined;
     let text = '';
     if (!aiWriting) {
-      const pool = this.store.templates().filter(t => t.topicId === topic.id && t.kind === item.action && t.enabled && t.text !== s.lastContent);
+      const pool = this.store.templates().filter(t => t.topicId === topic.id && t.kind === action && t.enabled && t.text !== s.lastContent);
       if (!pool.length) { skip('无可用且不重复的模板'); return; }
       template = pool[Math.floor(this.random() * pool.length)];
       text = template.text;
     }
-    let rpid = 0; let target = '';
+    let rpid = 0; let target = ''; let targetLikes: number | undefined;
     let candidates: OrdinaryComment[] = [];
-    if (item.action === 'reply') {
+    if (action === 'reply') {
       let comments;
       try { comments = await this.bili.comments(item.bvid); }
       catch (error) { this.fail(error,topic,{ ...details, content: text },'interaction'); return; }
       if (!this.live(generation) || !this.store.topic(topic.id)?.enabled) return;
-      candidates = comments.filter(c => topic.aiJudgment ? aiReplyCandidate(c, this.store.account().uid) : safeComment(c) && c.uid !== this.store.account().uid);
-      if (!candidates.length) { skip('无可确认安全的普通评论'); return; }
+      // Same lexical gate for template and AI replies; most-liked first, so AI sees them first and the template
+      // path picks among them at random.
+      const ownUid = this.store.account().uid;
+      candidates = comments.filter(c => aiReplyCandidate(c, ownUid) && c.like >= topic.replyMinLikes).sort((a, b) => b.like - a.like);
+      if (!candidates.length) { skip(`无点赞 ≥ ${topic.replyMinLikes} 且可确认安全的普通评论`); return; }
       if (!aiWriting) {
-        const chosen = candidates[Math.floor(this.random() * candidates.length)]; rpid = chosen.rpid; target = chosen.user;
+        const chosen = candidates[Math.floor(this.random() * candidates.length)]; rpid = chosen.rpid; target = chosen.user; targetLikes = chosen.like;
       }
     }
     if (aiWriting) {
       try {
         const written = await this.ai.write(topic, video, item.keyword, candidates);
-        if (!safeAiText(written.text) || (item.action === 'reply' ? !candidates.some(c => c.rpid === written.rpid) : written.rpid !== 0)) throw new AiFailure('AI 撰写未通过本地检查，已跳过');
-        text = written.text; rpid = written.rpid; target = candidates.find(c => c.rpid === rpid)?.user ?? '';
+        if (!safeAiText(written.text) || (action === 'reply' ? !candidates.some(c => c.rpid === written.rpid) : written.rpid !== 0)) throw new AiFailure('AI 撰写未通过本地检查，已跳过');
+        text = written.text; rpid = written.rpid;
+        const chosen = candidates.find(c => c.rpid === rpid); target = chosen?.user ?? ''; targetLikes = chosen?.like;
       } catch (error) { skip(error instanceof AiFailure ? error.message : 'AI 撰写失败，已跳过'); return; }
       if (!this.live(generation) || !this.store.topic(topic.id)?.enabled) return;
     }
@@ -246,27 +254,28 @@ export class Scheduler {
       const latestTopic = this.store.topic(topic.id);
       if (!latestTopic || this.topicAiError(latestTopic)) return;
       if (latestTopic.aiJudgment !== topic.aiJudgment) return;
-      if (topic.aiJudgment && (latestTopic.writingMode !== topic.writingMode || (aiWriting && latestTopic.style !== topic.style))) return;
+      if (topic.aiJudgment && (latestTopic.writingMode !== topic.writingMode || latestTopic.aiInteraction !== action || (aiWriting && latestTopic.style !== topic.style))) return;
       const claimTime = this.clock();
       if (!eligible(video, latestTopic, claimTime)) { skip('发送前视频不再满足热度或时间窗'); return; }
+      if (action === 'reply' && (candidates.find(c => c.rpid === rpid)?.like ?? -1) < latestTopic.replyMinLikes) { skip('发送前目标评论不再满足点赞门槛'); return; }
       const lastAttempt = z.object({ last: z.number().nullable() }).parse(this.store.db.prepare('SELECT max(attempted) AS last FROM interactions').get()).last;
       if (claimTime < latest.nextInteraction || (lastAttempt !== null && claimTime < lastAttempt + latest.limits.waitMin * 60000)) return;
-      const latestLimit = item.action === 'comment' ? latest.limits.dailyComment : latest.limits.dailyReply;
-      const latestTopicLimit = item.action === 'comment' ? latestTopic.dailyComment : latestTopic.dailyReply;
-      if (this.store.attemptCount(this.clock()) >= latest.limits.dailyTotal || this.store.attemptCount(this.clock(),undefined,item.action) >= latestLimit || this.store.attemptCount(this.clock(),topic.id,item.action) >= latestTopicLimit) return;
+      const latestLimit = action === 'comment' ? latest.limits.dailyComment : latest.limits.dailyReply;
+      const latestTopicLimit = action === 'comment' ? latestTopic.dailyComment : latestTopic.dailyReply;
+      if (this.store.attemptCount(this.clock()) >= latest.limits.dailyTotal || this.store.attemptCount(this.clock(),undefined,action) >= latestLimit || this.store.attemptCount(this.clock(),topic.id,action) >= latestTopicLimit) return;
       if (text === latest.lastContent) { if (aiWriting) skip('AI 撰写与上一条相同，已跳过'); return; }
-      if (template && !this.store.templates().some(t => t.id === template.id && t.enabled && t.text === text && t.topicId === topic.id && t.kind === item.action)) return;
+      if (template && !this.store.templates().some(t => t.id === template.id && t.enabled && t.text === text && t.topicId === topic.id && t.kind === action)) return;
       // Claim + persist pacing before network I/O: a timeout/crash must never replay this video.
-      const claim = this.store.db.prepare("UPDATE interactions SET state='claimed',attempted=?,content=?,target=? WHERE id=? AND state='queued'").run(claimTime,text,target,item.id);
+      const claim = this.store.db.prepare("UPDATE interactions SET state='claimed',action=?,attempted=?,content=?,target=?,target_likes=? WHERE id=? AND state='queued'").run(action,claimTime,text,target,targetLikes ?? null,item.id);
       if (!claim.changes) return;
       const current = this.store.settings(); current.lastContent = text; current.nextInteraction = claimTime + this.wait(current.limits.waitMin,current.limits.waitMax); this.store.saveSettings(current);
       const receipt = await this.bili.post(item.bvid,text,rpid);
       this.store.db.prepare("UPDATE interactions SET state='succeeded',receipt=? WHERE id=?").run(JSON.stringify(receipt ?? {}),item.id);
       const successful = this.store.settings(); successful.failures = 0; successful.retryAt = 0; this.store.saveSettings(successful);
-      this.log(topic,item.action,'成功',{ ...details, content: text, target });
+      this.log(topic,action,'成功',{ ...details, content: text, target, targetLikes });
     } catch (error) {
       this.store.db.prepare("UPDATE interactions SET state='failed' WHERE id=? AND state='claimed'").run(item.id);
-      this.fail(error,topic,{ ...details, content: text, target },'interaction');
+      this.fail(error,topic,{ ...details, content: text, target, targetLikes },'interaction');
     }
   }
   async close() { clearInterval(this.timer); await this.pause('服务停止'); }

@@ -7,12 +7,16 @@ export const topicSchema = z.object({
   enabled: z.boolean().default(false),
   aiJudgment: z.boolean().default(false),
   writingMode: z.enum(['template', 'ai']).default('template'),
+  // With AI judgment the model only decides skip / interact; this decides how. Probabilities apply only without AI.
+  aiInteraction: z.enum(['reply', 'comment']).default('reply'),
   style: z.string().trim().max(300).default(''),
   keywords: z.array(z.string().trim().min(1).max(100)).min(1).max(30),
   intervalMin: minutes.default(30), intervalMax: minutes.default(90),
   maxAgeHours: z.number().min(1).max(8760).default(72),
   minPlay: z.number().int().min(0).nullable().default(null),
   maxPlay: z.number().int().min(0).nullable().default(null),
+  // Reply only to root comments with at least this many likes; 0 removes the threshold.
+  replyMinLikes: z.number().int().min(0).max(100000000).default(50),
   dailySearch: quota.default(20), dailyComment: quota.default(5), dailyReply: quota.default(3),
   skipProbability: quota.default(70), commentProbability: quota.default(20), replyProbability: quota.default(10),
 }).superRefine((v, ctx) => {
@@ -42,9 +46,11 @@ export const settingsSchema = z.object({ limits: limitsSchema, running: z.boolea
 export type Settings = z.infer<typeof settingsSchema>;
 export const videoSchema = z.object({ bvid: z.string().regex(/^BV[0-9A-Za-z]{10}$/), aid: z.number().int().positive(), title: z.string(), author: z.string(), play: z.number().nonnegative(), pubdate: z.number().positive() });
 export type Video = z.infer<typeof videoSchema>;
-export const commentSchema = z.object({ rpid: z.number().int().positive(), user: z.string(), content: z.string(), pinned: z.boolean(), ordinary: z.boolean(), uid: z.string().optional() });
+export const commentSchema = z.object({ rpid: z.number().int().positive(), user: z.string(), content: z.string(), pinned: z.boolean(), ordinary: z.boolean(), like: z.number().int().nonnegative(), uid: z.string().optional() });
 export type OrdinaryComment = z.infer<typeof commentSchema>;
-export const activitySchema = z.object({ id: z.number().optional(), time: z.number(), topicId: z.number().nullable(), topic: z.string(), keyword: z.string(), bvid: z.string(), title: z.string(), author: z.string(), action: z.string(), content: z.string(), target: z.string(), result: z.string(), error: z.string() });
+export const activitySchema = z.object({ id: z.number().optional(), time: z.number(), topicId: z.number().nullable(), topic: z.string(), keyword: z.string(), bvid: z.string(), title: z.string(), author: z.string(), action: z.string(), content: z.string(), target: z.string(), result: z.string(), error: z.string(),
+  // Likes of the replied comment when it was read before sending; absent for comments and older rows.
+  targetLikes: z.number().int().nonnegative().optional() });
 export type Activity = z.infer<typeof activitySchema>;
 const statCount = z.number().int().nonnegative();
 export const postStatsSchema = z.object({ view: statCount, like: statCount, reply: statCount, favorite: statCount });
@@ -53,7 +59,7 @@ export const postReceiptSchema = z.object({ rpid: z.number().int().positive().op
 export type PostReceipt = z.infer<typeof postReceiptSchema>;
 // Only confirmed sends. Stats come from the send receipt, or the discovery play count for older rows.
 export const recentCommentSchema = z.object({
-  id: z.number(), time: z.number(), action: z.enum(['comment', 'reply']), bvid: z.string(), title: z.string(), author: z.string(), topic: z.string(), keyword: z.string(), content: z.string(), target: z.string(),
+  id: z.number(), time: z.number(), action: z.enum(['comment', 'reply']), bvid: z.string(), title: z.string(), author: z.string(), topic: z.string(), keyword: z.string(), content: z.string(), target: z.string(), targetLikes: z.number().nullable(),
   cover: z.string().nullable(), rpid: z.number().nullable(), stats: postStatsSchema.partial().extend({ view: z.number() }), statsAt: z.enum(['post', 'discover']),
 });
 export type RecentComment = z.infer<typeof recentCommentSchema>;
@@ -72,10 +78,5 @@ export class BiliError extends Error {
 export function dayStart(now: number) {
   // Fixed account day: Asia/Shanghai, independent of host timezone and DST.
   return Math.floor((now + 8 * 3600000) / 86400000) * 86400000 - 8 * 3600000;
-}
-export function safeComment(c: OrdinaryComment): boolean {
-  if (!c.ordinary || c.pinned || !Number.isSafeInteger(c.rpid) || c.rpid <= 0) return false;
-  // Fail closed: a small allowlist of harmless short reactions, not semantic classification.
-  return /^(好耶|好看|好棒|好可爱|可爱|喜欢|支持|加油|谢谢分享|感谢分享|学习了|学到了|有趣|哈哈哈|哈哈|喵|确实|不错|赞)[！!。\s]*$/.test(c.content.trim());
 }
 export const toolNames = ['bili_login','bili_login_check','bili_check_credential','bili_search','bili_comments','bili_subtitle','bili_danmaku','bili_video_info','bili_reply','bili_crawl','bili_send_dynamic','bili_upload_video','bili_upload_video_multi','bili_send_opus','bili_video_zones','bili_hot_videos','bili_hot_buzzwords','bili_weekly_hot','bili_rank','bili_user_info','bili_user_videos','bili_favorite_lists','bili_favorite_content','bili_send_message','bili_unread_messages','bili_received_replies','bili_received_at_and_likes'] as const;
