@@ -75,13 +75,18 @@ function RecentComments({ rows }: { rows: RecentComment[] }) {
   if (!rows.length) return <p className="empty">还没有发送成功的评论。</p>;
   return <div className="comment-list">{rows.map(row => {
     const stats = [['播放',row.stats.view],['点赞',row.stats.like],['评论',row.stats.reply],['收藏',row.stats.favorite]] as const;
+    // Left: the video; right: what was sent there. The panel stretches to the row so both bottoms line up.
     return <a key={row.id} className="comment-card" href={commentUrl(row)} target="_blank" rel="noreferrer">
       <div className="cover"><span>暂无封面</span>{row.cover && <img src={row.cover.includes('@') ? row.cover : `${row.cover}@320w_180h_1c`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}</div>
-      <div className="comment-body">
+      <div className="comment-video">
         <strong>{row.title || row.bvid}</strong>
         <small>UP {row.author} · {row.bvid} · {row.topic}</small>
-        <p className="comment-content">{row.action === 'reply' && <span className="tag">{row.target ? `回复 @${row.target}${row.targetLikes !== null ? ` · ${row.targetLikes} 赞` : ''}` : '回复'}</span>}{row.content}</p>
-        <small className="comment-meta"><span>{stats.filter(([,value]) => value !== undefined).map(([label,value]) => `${label} ${compact.format(value ?? 0)}`).join(' · ')}（{row.statsAt === 'post' ? '发送时' : '发现时'}）</span><span>{new Date(row.time).toLocaleString('zh-CN')}</span><span className="jump">{row.rpid ? '定位到这条评论 ↗' : '打开视频 ↗'}</span></small>
+        <small className="comment-stats">{stats.filter(([,value]) => value !== undefined).map(([label,value]) => `${label} ${compact.format(value ?? 0)}`).join(' · ')}（{row.statsAt === 'post' ? '发送时' : '发现时'}）</small>
+      </div>
+      <div className="comment-panel">
+        <small className="comment-kind"><span className="tag">{row.action === 'reply' ? '回复' : '评论'}</span>{row.action === 'comment' ? '直接评论视频' : row.target ? `@${row.target}${row.targetLikes !== null ? ` · ${compact.format(row.targetLikes)} 赞` : ''}` : '普通评论'}</small>
+        <p className="comment-content">{row.content}</p>
+        <small className="comment-meta"><span>{new Date(row.time).toLocaleString('zh-CN')}</span><span className="jump">{row.rpid ? '定位到这条评论 ↗' : '打开视频 ↗'}</span></small>
       </div>
     </a>;
   })}</div>;
