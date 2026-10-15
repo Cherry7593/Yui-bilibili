@@ -75,8 +75,18 @@ export class BiliError extends Error {
     super({ risk: '验证码或风控：已停止互动', auth: '登录失效，请重新登录', api: 'Bilibili API 请求失败', disabled: '真实写操作未启用' }[kind]);
   }
 }
-export function dayStart(now: number) {
-  // Fixed account day: Asia/Shanghai, independent of host timezone and DST.
-  return Math.floor((now + 8 * 3600000) / 86400000) * 86400000 - 8 * 3600000;
-}
+// Fixed account day: Asia/Shanghai, independent of host timezone and DST. Day index 0 is 1970-01-01 (Thursday).
+export function dayIndex(now: number) { return Math.floor((now + 8 * 3600000) / 86400000); }
+export function dayStart(now: number) { return dayIndex(now) * 86400000 - 8 * 3600000; }
+export const overviewActions = ['discover', 'comment', 'reply', 'skip', 'error'] as const;
+const overviewCount = z.number().int().nonnegative();
+// Overview numbers are Activity counts, like today's: all-time totals plus daily sends for the heatmap.
+export const overviewSchema = z.object({
+  day: z.number().int(),
+  totals: z.object({ discover: overviewCount, comment: overviewCount, reply: overviewCount, skip: overviewCount, error: overviewCount }),
+  daily: z.array(z.object({ day: z.number().int(), comment: overviewCount, reply: overviewCount })),
+});
+export type Overview = z.infer<typeof overviewSchema>;
+// The heatmap shows 53 weeks; its first Monday is at most 370 days before today.
+export const overviewDays = 371;
 export const toolNames = ['bili_login','bili_login_check','bili_check_credential','bili_search','bili_comments','bili_subtitle','bili_danmaku','bili_video_info','bili_reply','bili_crawl','bili_send_dynamic','bili_upload_video','bili_upload_video_multi','bili_send_opus','bili_video_zones','bili_hot_videos','bili_hot_buzzwords','bili_weekly_hot','bili_rank','bili_user_info','bili_user_videos','bili_favorite_lists','bili_favorite_content','bili_send_message','bili_unread_messages','bili_received_replies','bili_received_at_and_likes'] as const;
