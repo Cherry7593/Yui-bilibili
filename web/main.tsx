@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { z } from 'zod';
 import { defaultMinPlay, overviewActions, overviewSchema, topicSchema, templateSchema, settingsSchema, aiSettingsSchema, activitySchema, recentCommentSchema, type Overview, type TopicConfig, type Topic, type Template, type Limits, type Activity, type RecentComment } from '../server/model.js';
@@ -72,14 +72,31 @@ const heatMetrics = { all: '互动', comment: '评论', reply: '回复' } as con
 type HeatMetric = keyof typeof heatMetrics;
 // Day indexes are Asia/Shanghai calendar days, so the UTC fields of day * 86400000 are that calendar date.
 const calendar = (day: number) => new Date(day * 86400000);
+// Tooltip body: date and weekday, the selected metric, then the comment / reply split.
+function HeatTip({ day,comment,reply,metric }: { day: number; comment: number; reply: number; metric: HeatMetric }) {
+  const primary = { all: `${comment + reply} 条互动`, comment: `${comment} 条评论`, reply: `${reply} 条回复` }[metric];
+  return <div className="heat-tip-box">
+    <div className="heat-tip-muted">{`${calendar(day).toISOString().slice(0,10)} 周${weekdayNames[(day + 3) % 7]}`}</div>
+    {comment + reply ? <><div><strong>{primary}</strong></div><div className="heat-tip-muted">{`评论 ${comment} · 回复 ${reply}`}</div></> : <div>无互动</div>}
+  </div>;
+}
 function Heatmap({ overview }: { overview: Overview }) {
   const [metric,setMetric] = useState<HeatMetric>('all');
-  // Hover previews a day; a click or tap pins it, since touch screens have no hover.
-  const [hovered,setHovered] = useState<number>();
-  const [pinned,setPinned] = useState<number>();
+  // The hovered day; x / y are the cell's top centre inside the heatmap area.
+  const [hover,setHover] = useState<{ day: number; x: number; y: number }>();
+  const area = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const tip = useRef<HTMLDivElement>(null);
+  const arrow = useRef<HTMLSpanElement>(null);
   // Narrow screens scroll horizontally; start at the latest weeks.
   useEffect(() => { if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth; },[]);
+  // Keep the tooltip inside the area with its arrow on the cell; placed before paint, so it never flickers.
+  useLayoutEffect(() => {
+    if (!hover || !area.current || !tip.current || !arrow.current) return;
+    const left = Math.min(Math.max(hover.x - tip.current.offsetWidth / 2,0),Math.max(area.current.clientWidth - tip.current.offsetWidth,0));
+    tip.current.style.left = `${left}px`;
+    arrow.current.style.left = `${hover.x - left}px`;
+  });
   const sends = new Map(overview.daily.map(row => [row.day,row]));
   const count = (day: number) => { const row = sends.get(day); return !row ? 0 : metric === 'all' ? row.comment + row.reply : row[metric]; };
   // Rows run Monday to Sunday; the first column is the Monday 52 weeks before this week's.
@@ -90,23 +107,29 @@ function Heatmap({ overview }: { overview: Overview }) {
   const monthOf = (week: number) => calendar(first + week * 7).getUTCMonth();
   // A month is labelled where its first full column starts; column 0 only when its month lasts three columns.
   const months = Array.from({ length: 53 },(_,week) => (week > 0 ? monthOf(week) !== monthOf(week - 1) : monthOf(1) === monthOf(0) && monthOf(2) === monthOf(0)) ? `${monthOf(week) + 1}月` : '');
-  const describe = (day: number) => {
-    const row = sends.get(day);
-    return `${calendar(day).getUTCMonth() + 1}月${calendar(day).getUTCDate()}日 周${weekdayNames[(day + 3) % 7]}：${row ? `评论 ${row.comment} · 回复 ${row.reply}` : '无互动'}`;
+  // Shown at once on entering a cell (no native title delay); gaps between cells keep the last day, so it never flickers.
+  const showTip = (target: EventTarget) => {
+    if (!(target instanceof HTMLElement) || !target.dataset.day || !area.current) return;
+    const box = area.current.getBoundingClientRect();
+    const cell = target.getBoundingClientRect();
+    setHover({ day: Number(target.dataset.day), x: cell.left + cell.width / 2 - box.left, y: cell.top - box.top });
   };
-  const dayOf = (target: EventTarget) => target instanceof HTMLElement && target.dataset.day ? Number(target.dataset.day) : undefined;
-  const shown = hovered ?? pinned;
+  // Read by day on every render, so a 5-second refresh updates an open tooltip.
+  const hovered = hover && sends.get(hover.day);
   return <div className="card heatmap-card">
-    <div className="section-heading"><div><h2>互动热力图</h2><small>最近 53 周每日发送成功的{heatMetrics[metric]}数，悬停或点击某天查看明细</small></div><div className="segmented" role="group" aria-label="热力图统计">{Object.entries(heatMetrics).map(([key,label]) => <button key={key} type="button" aria-pressed={metric === key} onClick={() => setMetric(key as HeatMetric)}>{label}</button>)}</div></div>
-    <div className="heatmap-scroll" ref={scroller} tabIndex={0} aria-label="互动热力图，可横向滚动">
-      <div className="heatmap" role="img" aria-label={`最近 53 周共 ${total} 条${heatMetrics[metric]}，单日最多 ${max} 条`}>
-        <span />
-        <div className="heatmap-months">{months.map((label,week) => <span key={week}>{label}</span>)}</div>
-        <div className="heatmap-weekdays">{weekdayNames.map((name,index) => <span key={name}>{index % 2 === 0 && index < 6 ? name : ''}</span>)}</div>
-        <div className="heatmap-cells" onMouseOver={event => setHovered(dayOf(event.target))} onMouseLeave={() => setHovered(undefined)} onClick={event => { const day = dayOf(event.target); setPinned(day === pinned ? undefined : day); }}>{days.map(day => { const n = count(day); return <i key={day} data-day={day} className={`heat-${n === 0 ? 0 : Math.min(4,Math.ceil(n / max * 4))}${day === pinned ? ' picked' : ''}`} title={describe(day)} />; })}</div>
+    <div className="section-heading"><div><h2>互动热力图</h2><small>最近 53 周每日发送成功的{heatMetrics[metric]}数，悬停查看当日明细</small></div><div className="segmented" role="group" aria-label="热力图统计">{Object.entries(heatMetrics).map(([key,label]) => <button key={key} type="button" aria-pressed={metric === key} onClick={() => setMetric(key as HeatMetric)}>{label}</button>)}</div></div>
+    <div className="heatmap-area" ref={area}>
+      <div className="heatmap-scroll" ref={scroller} tabIndex={0} aria-label="互动热力图，可横向滚动" onScroll={() => setHover(undefined)}>
+        <div className="heatmap" role="img" aria-label={`最近 53 周共 ${total} 条${heatMetrics[metric]}，单日最多 ${max} 条`} onMouseLeave={() => setHover(undefined)}>
+          <span />
+          <div className="heatmap-months">{months.map((label,week) => <span key={week}>{label}</span>)}</div>
+          <div className="heatmap-weekdays">{weekdayNames.map((name,index) => <span key={name}>{index % 2 === 0 && index < 6 ? name : ''}</span>)}</div>
+          <div className="heatmap-cells" onMouseOver={event => showTip(event.target)}>{days.map(day => { const n = count(day); return <i key={day} data-day={day} className={`heat-${n === 0 ? 0 : Math.min(4,Math.ceil(n / max * 4))}`} />; })}</div>
+        </div>
       </div>
+      {hover && <div className="heat-tip" ref={tip} style={{ top: hover.y }} aria-hidden><HeatTip day={hover.day} comment={hovered?.comment ?? 0} reply={hovered?.reply ?? 0} metric={metric} /><span className="heat-tip-arrow" ref={arrow} /></div>}
     </div>
-    <div className="heatmap-foot"><small className={shown === undefined ? '' : 'heatmap-detail'}>{shown === undefined ? '只统计确认发送成功的评论与回复；日界为 Asia/Shanghai。' : describe(shown)}</small><span className="legend" aria-hidden>少{[0,1,2,3,4].map(level => <i key={level} className={`heat-${level}`} />)}多</span></div>
+    <div className="heatmap-foot"><small>只统计确认发送成功的评论与回复；日界为 Asia/Shanghai。</small><span className="legend" aria-hidden>少{[0,1,2,3,4].map(level => <i key={level} className={`heat-${level}`} />)}多</span></div>
   </div>;
 }
 const compact = new Intl.NumberFormat('zh-CN',{ notation: 'compact', maximumFractionDigits: 1 });
