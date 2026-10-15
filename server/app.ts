@@ -54,7 +54,7 @@ export async function createApp(store: Store, bili: ApplicationBilibili, schedul
   app.get('/api/state', () => {
     const now = Date.now();
     const queue = z.object({ n: z.number() }).parse(store.db.prepare("SELECT count(*) n FROM interactions WHERE state='queued'").get());
-    return { settings: store.settings(), topics: store.topics(now), templates: store.templates(), recentComments: store.recentComments(10), today: { discover: store.count('discover',now), comment: store.count('comment',now), reply: store.count('reply',now), skip: store.count('skip',now), error: store.count('error',now) }, system: { version: '1.0.0', node: process.version, uptime: Math.floor(process.uptime()), writesEnabled, queued: queue.n } };
+    return { settings: store.settings(), topics: store.topics(now), templates: store.templates(), recentComments: store.recentComments(10), today: { discover: store.count('discover',now), comment: store.count('comment',now), reply: store.count('reply',now), skip: store.count('skip',now), error: store.count('error',now) }, overview: store.overview(now), system: { version: '1.0.0', node: process.version, uptime: Math.floor(process.uptime()), writesEnabled, queued: queue.n } };
   });
   app.post('/api/topics', request => ({ id: scheduler.saveTopic(topicSchema.parse(request.body)) }));
   app.put('/api/topics/:id', request => {

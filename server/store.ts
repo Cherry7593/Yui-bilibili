@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
-import { dayStart, limitsSchema, topicSchema, accountSchema, settingsSchema, aiConfigSchema, activitySchema, videoSchema, postReceiptSchema, type AiConfig, type Topic, type TopicConfig, type Template, type Settings, type Activity, type Video, type RecentComment } from './model.js';
+import { dayIndex, dayStart, overviewActions, overviewDays, limitsSchema, topicSchema, accountSchema, settingsSchema, aiConfigSchema, activitySchema, videoSchema, postReceiptSchema, type AiConfig, type Topic, type TopicConfig, type Template, type Settings, type Activity, type Video, type RecentComment, type Overview } from './model.js';
 const dataRow = z.object({ data: z.string() });
 const countRow = z.object({ n: z.number() });
 const queueSchema = z.object({ id: z.number(), bvid: z.string(), topic_id: z.number(), action: z.enum(['comment','reply']), state: z.string(), due: z.number(), video: z.string(), keyword: z.string() });
@@ -138,6 +138,22 @@ export class Store {
       const receipt = postReceiptSchema.catch({}).parse(row.receipt ? JSON.parse(row.receipt) : {});
       return { id: row.id, time: row.attempted, action: row.action, bvid: video.bvid, title: plainTitle(video.title), author: video.author, topic: row.config === null ? '已删除频道' : topicNameSchema.parse(JSON.parse(row.config)).name, keyword: row.keyword, content: row.content, target: row.target, targetLikes: row.target_likes, cover: receipt.cover ?? null, rpid: receipt.rpid ?? null, stats: receipt.stats ?? { view: video.play }, statsAt: receipt.stats ? 'post' : 'discover' };
     });
+  }
+  // Activity is never pruned, so totals cover all history. Daily rows cover the heatmap window and only days with sends.
+  overview(now: number): Overview {
+    const totals: Overview['totals'] = { discover: 0, comment: 0, reply: 0, skip: 0, error: 0 };
+    for (const raw of this.db.prepare(`SELECT action,count(*) AS n FROM activity WHERE action IN (${overviewActions.map(() => '?').join(',')}) GROUP BY action`).all(...overviewActions)) {
+      const row = z.object({ action: z.enum(overviewActions), n: z.number() }).parse(raw);
+      totals[row.action] = row.n;
+    }
+    const day = dayIndex(now);
+    const daily = new Map<number, Overview['daily'][number]>();
+    for (const raw of this.db.prepare("SELECT (time+28800000)/86400000 AS day,action,count(*) AS n FROM activity WHERE time>=? AND action IN ('comment','reply') GROUP BY day,action ORDER BY day").all((day - overviewDays + 1) * 86400000 - 28800000)) {
+      const row = z.object({ day: z.number(), action: z.enum(['comment','reply']), n: z.number() }).parse(raw);
+      const entry = daily.get(row.day) ?? { day: row.day, comment: 0, reply: 0 };
+      entry[row.action] = row.n; daily.set(row.day, entry);
+    }
+    return { day, totals, daily: [...daily.values()] };
   }
   count(action: string, now: number, topicId?: number) {
     return countRow.parse(this.db.prepare('SELECT count(*) AS n FROM activity WHERE time>=? AND action=? AND (? IS NULL OR topic_id=?)').get(dayStart(now),action,topicId ?? null,topicId ?? null)).n;
