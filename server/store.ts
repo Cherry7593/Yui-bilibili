@@ -6,10 +6,10 @@ import { dayIndex, dayStart, overviewActions, overviewDays, limitsSchema, topicS
 const dataRow = z.object({ data: z.string() });
 const countRow = z.object({ n: z.number() });
 const queueSchema = z.object({ id: z.number(), bvid: z.string(), topic_id: z.number(), action: z.enum(['comment','reply']), state: z.string(), due: z.number(), video: z.string(), keyword: z.string() });
-const claimedSchema = activitySchema.pick({ topicId: true, bvid: true, content: true, target: true, keyword: true }).extend({ targetLikes: z.number().nullable(), time: z.number().nullable(), video: z.string(), config: z.string().nullable() });
+const claimedSchema = activitySchema.pick({ topicId: true, bvid: true, content: true, target: true, keyword: true }).extend({ targetLikes: z.number().nullable(), targetContent: z.string().nullable(), time: z.number().nullable(), video: z.string(), config: z.string().nullable() });
 const topicNameSchema = topicSchema.innerType().pick({ name: true });
 export const STARTUP_PAUSE = '启动后暂停，请检查登录状态';
-const recentRowSchema = z.object({ id: z.number(), action: z.enum(['comment','reply']), attempted: z.number(), content: z.string(), target: z.string(), target_likes: z.number().nullable(), receipt: z.string(), video: z.string(), keyword: z.string(), config: z.string().nullable() });
+const recentRowSchema = z.object({ id: z.number(), action: z.enum(['comment','reply']), attempted: z.number(), content: z.string(), target: z.string(), target_likes: z.number().nullable(), target_content: z.string().nullable(), receipt: z.string(), video: z.string(), keyword: z.string(), config: z.string().nullable() });
 const entities: Record<string,string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 // Search titles arrive HTML-escaped (for example &amp;); decode them for plain-text display.
 function plainTitle(title: string) {
@@ -39,16 +39,17 @@ export class Store {
     `);
     if (!countRow.parse(this.db.prepare("SELECT count(*) AS n FROM pragma_table_info('interactions') WHERE name='target'").get()).n) this.db.exec("ALTER TABLE interactions ADD COLUMN target TEXT NOT NULL DEFAULT ''");
     if (!countRow.parse(this.db.prepare("SELECT count(*) AS n FROM pragma_table_info('interactions') WHERE name='target_likes'").get()).n) this.db.exec('ALTER TABLE interactions ADD COLUMN target_likes INTEGER');
+    if (!countRow.parse(this.db.prepare("SELECT count(*) AS n FROM pragma_table_info('interactions') WHERE name='target_content'").get()).n) this.db.exec('ALTER TABLE interactions ADD COLUMN target_content TEXT');
     if (!countRow.parse(this.db.prepare("SELECT count(*) AS n FROM pragma_table_info('interactions') WHERE name='receipt'").get()).n) this.db.exec("ALTER TABLE interactions ADD COLUMN receipt TEXT NOT NULL DEFAULT ''");
     if (!countRow.parse(this.db.prepare('SELECT count(*) AS n FROM app_settings').get()).n) this.saveSettings(settingsSchema.parse({ limits: limitsSchema.parse({}), running: false, pauseReason: '默认暂停', failures: 0, retryAt: 0, nextInteraction: 0, lastContent: '', account: { loggedIn: false, message: '未登录' } }));
     // Never resume writes after restart. A claimed request may already have reached Bilibili.
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const claimed = this.db.prepare("SELECT i.topic_id AS topicId,i.bvid,i.attempted AS time,i.content,i.target,i.target_likes AS targetLikes,d.keyword,d.video,t.config FROM interactions i JOIN discoveries d USING(bvid) LEFT JOIN topics t ON t.id=i.topic_id WHERE i.state='claimed'").all();
+      const claimed = this.db.prepare("SELECT i.topic_id AS topicId,i.bvid,i.attempted AS time,i.content,i.target,i.target_likes AS targetLikes,i.target_content AS targetContent,d.keyword,d.video,t.config FROM interactions i JOIN discoveries d USING(bvid) LEFT JOIN topics t ON t.id=i.topic_id WHERE i.state='claimed'").all();
       this.db.prepare("UPDATE interactions SET state='uncertain' WHERE state='claimed'").run();
       for (const raw of claimed) {
         const row = claimedSchema.parse(raw); const video = videoSchema.parse(JSON.parse(row.video));
-        this.log({ time: row.time ?? Date.now(), topicId: row.topicId, topic: row.config === null ? '系统' : topicNameSchema.parse(JSON.parse(row.config)).name, keyword: row.keyword, bvid: row.bvid, title: video.title, author: video.author, action: 'error', content: row.content, target: row.target, ...(row.targetLikes === null ? {} : { targetLikes: row.targetLikes }), result: '发送结果不确定', error: '服务在发送结果确认前停止；不会重试此视频' });
+        this.log({ time: row.time ?? Date.now(), topicId: row.topicId, topic: row.config === null ? '系统' : topicNameSchema.parse(JSON.parse(row.config)).name, keyword: row.keyword, bvid: row.bvid, title: video.title, author: video.author, action: 'error', content: row.content, target: row.target, ...(row.targetLikes === null ? {} : { targetLikes: row.targetLikes }), ...(row.targetContent === null ? {} : { targetContent: row.targetContent }), result: '发送结果不确定', error: '服务在发送结果确认前停止；不会重试此视频' });
       }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -133,10 +134,10 @@ export class Store {
     });
   }
   recentComments(limit = 10): RecentComment[] {
-    return this.db.prepare("SELECT i.id,i.action,i.attempted,i.content,i.target,i.target_likes,i.receipt,d.video,d.keyword,t.config FROM interactions i JOIN discoveries d USING(bvid) LEFT JOIN topics t ON t.id=i.topic_id WHERE i.state='succeeded' ORDER BY i.attempted DESC,i.id DESC LIMIT ?").all(limit).map(raw => {
+    return this.db.prepare("SELECT i.id,i.action,i.attempted,i.content,i.target,i.target_likes,i.target_content,i.receipt,d.video,d.keyword,t.config FROM interactions i JOIN discoveries d USING(bvid) LEFT JOIN topics t ON t.id=i.topic_id WHERE i.state='succeeded' ORDER BY i.attempted DESC,i.id DESC LIMIT ?").all(limit).map(raw => {
       const row = recentRowSchema.parse(raw); const video = videoSchema.parse(JSON.parse(row.video));
       const receipt = postReceiptSchema.catch({}).parse(row.receipt ? JSON.parse(row.receipt) : {});
-      return { id: row.id, time: row.attempted, action: row.action, bvid: video.bvid, title: plainTitle(video.title), author: video.author, topic: row.config === null ? '已删除频道' : topicNameSchema.parse(JSON.parse(row.config)).name, keyword: row.keyword, content: row.content, target: row.target, targetLikes: row.target_likes, cover: receipt.cover ?? null, rpid: receipt.rpid ?? null, stats: receipt.stats ?? { view: video.play }, statsAt: receipt.stats ? 'post' : 'discover' };
+      return { id: row.id, time: row.attempted, action: row.action, bvid: video.bvid, title: plainTitle(video.title), author: video.author, topic: row.config === null ? '已删除频道' : topicNameSchema.parse(JSON.parse(row.config)).name, keyword: row.keyword, content: row.content, target: row.target, targetLikes: row.target_likes, targetContent: row.target_content, cover: receipt.cover ?? null, rpid: receipt.rpid ?? null, stats: receipt.stats ?? { view: video.play }, statsAt: receipt.stats ? 'post' : 'discover' };
     });
   }
   // Activity is never pruned, so totals cover all history. Daily rows cover the heatmap window and only days with sends.

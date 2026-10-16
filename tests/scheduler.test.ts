@@ -82,7 +82,8 @@ test('template replies target the most-liked safe root comment at or above the l
   await f.scheduler.run(); await f.scheduler.tick(); f.advance(60000); await f.scheduler.tick();
   assert.equal(f.store.topic(f.id)?.replyMinLikes,50);
   assert.equal(f.store.activity('reply')[0].target,'高赞用户'); assert.equal(f.bili.writes[0].rpid,7);
-  assert.equal(f.store.activity('reply')[0].targetLikes,300); assert.equal(f.store.recentComments()[0].targetLikes,300); f.store.close();
+  assert.equal(f.store.activity('reply')[0].targetLikes,300); assert.equal(f.store.recentComments()[0].targetLikes,300);
+  assert.equal(f.store.activity('reply')[0].targetContent,'这个思路学到了，收藏了'); assert.equal(f.store.recentComments()[0].targetContent,'这个思路学到了，收藏了'); f.store.close();
 });
 test('no root comment reaching the like threshold skips the reply; threshold 0 removes it', async () => {
   for (const [threshold,expected] of [[50,[]],[0,[5]]] as const) {
@@ -134,14 +135,14 @@ test('failed reply Activity and API retain attempted content and target without 
     assert.equal(f.bili.writes[0].rpid,4);
     assert.equal(f.store.db.prepare('SELECT state FROM interactions').get()?.state,'failed');
     const failed = f.store.activity('error')[0];
-    assert.equal(failed.content,f.bili.writes[0].text); assert.equal(failed.target,'普通用户'); assert.equal(failed.targetLikes,120);
+    assert.equal(failed.content,f.bili.writes[0].text); assert.equal(failed.target,'普通用户'); assert.equal(failed.targetLikes,120); assert.equal(failed.targetContent,'好耶！');
     assert.equal(failed.error,new BiliError('api').message);
     assert.equal(JSON.stringify(f.store.activity()).includes(rawDetail),false);
     app = await createApp(f.store,f.bili,f.scheduler,join(directory,'credential.json'),false);
     const response = await app.inject({ method:'GET',url:'/api/activity?action=error' });
     assert.equal(response.statusCode,200);
     const visible = z.array(activitySchema).parse(response.json())[0];
-    assert.equal(visible.content,f.bili.writes[0].text); assert.equal(visible.target,'普通用户'); assert.equal(visible.targetLikes,120);
+    assert.equal(visible.content,f.bili.writes[0].text); assert.equal(visible.target,'普通用户'); assert.equal(visible.targetLikes,120); assert.equal(visible.targetContent,'好耶！');
     assert.equal(visible.error,new BiliError('api').message); assert.equal(response.body.includes(rawDetail),false);
   } finally { await app?.close(); await f.scheduler.close(); f.store.close(); rmSync(directory,{ recursive:true }); }
 });
@@ -161,8 +162,8 @@ test('recent comments list only confirmed sends, keep the send receipt and fall 
     f.store.db.prepare("INSERT INTO interactions(bvid,topic_id,action,state,due,attempted,content,target) VALUES(?,?,'reply','succeeded',0,?,'好耶','普通用户')").run(legacy.bvid,f.id,initialTime - 1);
     const rows = f.store.recentComments();
     assert.deepEqual(rows.map(row => row.bvid),['BV1000000001','BV1000000004']);
-    assert.deepEqual(rows[0],{ id: rows[0].id,time: initialTime + 60000,action: 'comment',bvid: 'BV1000000001',title: "沙盒&生存 '第一期'",author: '测试UP',topic: '任意兴趣',keyword: '关键词一',content: f.bili.writes[0].text,target: '',targetLikes: null,cover: 'https://i0.hdslb.com/bfs/archive/cover.jpg',rpid: 290501715345,stats: { view: 12345,like: 6,reply: 7,favorite: 8 },statsAt: 'post' });
-    assert.deepEqual({ ...rows[1],id: 0 },{ id: 0,time: initialTime - 1,action: 'reply',bvid: 'BV1000000004',title: '测试视频',author: '测试UP',topic: '任意兴趣',keyword: '关键词一',content: '好耶',target: '普通用户',targetLikes: null,cover: null,rpid: null,stats: { view: 42 },statsAt: 'discover' });
+    assert.deepEqual(rows[0],{ id: rows[0].id,time: initialTime + 60000,action: 'comment',bvid: 'BV1000000001',title: "沙盒&生存 '第一期'",author: '测试UP',topic: '任意兴趣',keyword: '关键词一',content: f.bili.writes[0].text,target: '',targetLikes: null,targetContent: null,cover: 'https://i0.hdslb.com/bfs/archive/cover.jpg',rpid: 290501715345,stats: { view: 12345,like: 6,reply: 7,favorite: 8 },statsAt: 'post' });
+    assert.deepEqual({ ...rows[1],id: 0 },{ id: 0,time: initialTime - 1,action: 'reply',bvid: 'BV1000000004',title: '测试视频',author: '测试UP',topic: '任意兴趣',keyword: '关键词一',content: '好耶',target: '普通用户',targetLikes: null,targetContent: null,cover: null,rpid: null,stats: { view: 42 },statsAt: 'discover' });
     app = await createApp(f.store,f.bili,f.scheduler,join(directory,'credential.json'),false);
     const response = await app.inject({ method:'GET',url:'/api/state' }); assert.equal(response.statusCode,200);
     const body = z.object({ recentComments: z.array(recentCommentSchema) }).passthrough().parse(response.json());
@@ -189,29 +190,31 @@ test('a failed idle login check keeps the current state and retries after 5 minu
   assert.equal(checks,2); assert.equal(f.store.account().loggedIn,true);
   f.advance(5*60000); await f.scheduler.tick(); assert.equal(checks,2); f.store.close();
 });
-test('a reply claimed before a crash keeps its target like count in the uncertain Activity; comments carry none', async () => {
+test('a reply claimed before a crash keeps its target like count and text in the uncertain Activity; comments carry none', async () => {
   const directory = mkdtempSync(join(tmpdir(),'yui-target-likes-')); const path = join(directory,'patrol.sqlite');
   const f = fixture('reply',path);
   f.bili.replies = [{ rpid:4,user:'普通用户',content:'讲得很清楚',pinned:false,ordinary:true,like:88,uid:'200' }];
   f.bili.post = () => new Promise(() => {});
   await f.scheduler.run(); await f.scheduler.tick(); f.advance(60000); void f.scheduler.tick();
   await new Promise(resolve => setTimeout(resolve,50));
-  assert.equal(f.store.db.prepare('SELECT state,target_likes FROM interactions').get()?.target_likes,88);
+  const claimed = f.store.db.prepare('SELECT target_likes,target_content FROM interactions').get();
+  assert.equal(claimed?.target_likes,88); assert.equal(claimed?.target_content,'讲得很清楚');
   f.store.close();
   const restarted = new Store(path);
   const uncertain = restarted.activity('error')[0];
-  assert.equal(uncertain.result,'发送结果不确定'); assert.equal(uncertain.target,'普通用户'); assert.equal(uncertain.targetLikes,88);
+  assert.equal(uncertain.result,'发送结果不确定'); assert.equal(uncertain.target,'普通用户'); assert.equal(uncertain.targetLikes,88); assert.equal(uncertain.targetContent,'讲得很清楚');
   restarted.close(); rmSync(directory,{ recursive:true });
   const c = fixture('comment'); await c.scheduler.run(); await c.scheduler.tick(); c.advance(60000); await c.scheduler.tick();
-  assert.equal(c.store.activity('comment')[0].targetLikes,undefined); assert.equal(c.store.recentComments()[0].targetLikes,null); c.store.close();
+  assert.equal(c.store.activity('comment')[0].targetLikes,undefined); assert.equal(c.store.recentComments()[0].targetLikes,null);
+  assert.equal(c.store.activity('comment')[0].targetContent,undefined); assert.equal(c.store.recentComments()[0].targetContent,null); c.store.close();
 });
 test('existing databases gain the receipt column without losing confirmed comments', async () => {
   const directory = mkdtempSync(join(tmpdir(),'yui-receipt-')); const path = join(directory,'patrol.sqlite');
   const f = fixture('comment',path); await f.scheduler.run(); await f.scheduler.tick(); f.advance(60000); await f.scheduler.tick();
-  await f.scheduler.close(); f.store.db.exec('ALTER TABLE interactions DROP COLUMN receipt; ALTER TABLE interactions DROP COLUMN target_likes'); f.store.close();
+  await f.scheduler.close(); f.store.db.exec('ALTER TABLE interactions DROP COLUMN receipt; ALTER TABLE interactions DROP COLUMN target_likes; ALTER TABLE interactions DROP COLUMN target_content'); f.store.close();
   const upgraded = new Store(path);
-  for (const column of ['receipt','target_likes']) assert.equal(upgraded.db.prepare("SELECT count(*) AS n FROM pragma_table_info('interactions') WHERE name=?").get(column)?.n,1);
-  const [row] = upgraded.recentComments(); assert.equal(row.bvid,'BV1000000001'); assert.equal(row.statsAt,'discover'); assert.equal(row.cover,null); assert.equal(row.targetLikes,null);
+  for (const column of ['receipt','target_likes','target_content']) assert.equal(upgraded.db.prepare("SELECT count(*) AS n FROM pragma_table_info('interactions') WHERE name=?").get(column)?.n,1);
+  const [row] = upgraded.recentComments(); assert.equal(row.bvid,'BV1000000001'); assert.equal(row.statsAt,'discover'); assert.equal(row.cover,null); assert.equal(row.targetLikes,null); assert.equal(row.targetContent,null);
   upgraded.close(); rmSync(directory,{ recursive:true });
 });
 test('backoff survives idle login checks and consecutive failed searches auto-pause', async () => {

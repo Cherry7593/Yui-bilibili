@@ -49,8 +49,8 @@ export type Video = z.infer<typeof videoSchema>;
 export const commentSchema = z.object({ rpid: z.number().int().positive(), user: z.string(), content: z.string(), pinned: z.boolean(), ordinary: z.boolean(), like: z.number().int().nonnegative(), uid: z.string().optional() });
 export type OrdinaryComment = z.infer<typeof commentSchema>;
 export const activitySchema = z.object({ id: z.number().optional(), time: z.number(), topicId: z.number().nullable(), topic: z.string(), keyword: z.string(), bvid: z.string(), title: z.string(), author: z.string(), action: z.string(), content: z.string(), target: z.string(), result: z.string(), error: z.string(),
-  // Likes of the replied comment when it was read before sending; absent for comments and older rows.
-  targetLikes: z.number().int().nonnegative().optional() });
+  // Likes and text of the replied comment when it was read before sending; absent for comments and older rows.
+  targetLikes: z.number().int().nonnegative().optional(), targetContent: z.string().optional() });
 export type Activity = z.infer<typeof activitySchema>;
 const statCount = z.number().int().nonnegative();
 export const postStatsSchema = z.object({ view: statCount, like: statCount, reply: statCount, favorite: statCount });
@@ -58,8 +58,9 @@ export const postStatsSchema = z.object({ view: statCount, like: statCount, repl
 export const postReceiptSchema = z.object({ rpid: z.number().int().positive().optional(), cover: z.string().optional(), stats: postStatsSchema.optional() });
 export type PostReceipt = z.infer<typeof postReceiptSchema>;
 // Only confirmed sends. Stats come from the send receipt, or the discovery play count for older rows.
+// targetContent defaults so a page built after it was added still loads from a server started before.
 export const recentCommentSchema = z.object({
-  id: z.number(), time: z.number(), action: z.enum(['comment', 'reply']), bvid: z.string(), title: z.string(), author: z.string(), topic: z.string(), keyword: z.string(), content: z.string(), target: z.string(), targetLikes: z.number().nullable(),
+  id: z.number(), time: z.number(), action: z.enum(['comment', 'reply']), bvid: z.string(), title: z.string(), author: z.string(), topic: z.string(), keyword: z.string(), content: z.string(), target: z.string(), targetLikes: z.number().nullable(), targetContent: z.string().nullable().default(null),
   cover: z.string().nullable(), rpid: z.number().nullable(), stats: postStatsSchema.partial().extend({ view: z.number() }), statsAt: z.enum(['post', 'discover']),
 });
 export type RecentComment = z.infer<typeof recentCommentSchema>;
