@@ -220,7 +220,7 @@ export class Scheduler {
       template = pool[Math.floor(this.random() * pool.length)];
       text = template.text;
     }
-    let rpid = 0; let target = ''; let targetLikes: number | undefined;
+    let rpid = 0; let target = ''; let targetLikes: number | undefined; let targetContent: string | undefined;
     let candidates: OrdinaryComment[] = [];
     if (action === 'reply') {
       let comments;
@@ -233,7 +233,7 @@ export class Scheduler {
       candidates = comments.filter(c => aiReplyCandidate(c, ownUid) && c.like >= topic.replyMinLikes).sort((a, b) => b.like - a.like);
       if (!candidates.length) { skip(`无点赞 ≥ ${topic.replyMinLikes} 且可确认安全的普通评论`); return; }
       if (!aiWriting) {
-        const chosen = candidates[Math.floor(this.random() * candidates.length)]; rpid = chosen.rpid; target = chosen.user; targetLikes = chosen.like;
+        const chosen = candidates[Math.floor(this.random() * candidates.length)]; rpid = chosen.rpid; target = chosen.user; targetLikes = chosen.like; targetContent = chosen.content;
       }
     }
     if (aiWriting) {
@@ -241,7 +241,7 @@ export class Scheduler {
         const written = await this.ai.write(topic, video, item.keyword, candidates);
         if (!safeAiText(written.text) || (action === 'reply' ? !candidates.some(c => c.rpid === written.rpid) : written.rpid !== 0)) throw new AiFailure('AI 撰写未通过本地检查，已跳过');
         text = written.text; rpid = written.rpid;
-        const chosen = candidates.find(c => c.rpid === rpid); target = chosen?.user ?? ''; targetLikes = chosen?.like;
+        const chosen = candidates.find(c => c.rpid === rpid); target = chosen?.user ?? ''; targetLikes = chosen?.like; targetContent = chosen?.content;
       } catch (error) { skip(error instanceof AiFailure ? error.message : 'AI 撰写失败，已跳过'); return; }
       if (!this.live(generation) || !this.store.topic(topic.id)?.enabled) return;
     }
@@ -266,16 +266,16 @@ export class Scheduler {
       if (text === latest.lastContent) { if (aiWriting) skip('AI 撰写与上一条相同，已跳过'); return; }
       if (template && !this.store.templates().some(t => t.id === template.id && t.enabled && t.text === text && t.topicId === topic.id && t.kind === action)) return;
       // Claim + persist pacing before network I/O: a timeout/crash must never replay this video.
-      const claim = this.store.db.prepare("UPDATE interactions SET state='claimed',action=?,attempted=?,content=?,target=?,target_likes=? WHERE id=? AND state='queued'").run(action,claimTime,text,target,targetLikes ?? null,item.id);
+      const claim = this.store.db.prepare("UPDATE interactions SET state='claimed',action=?,attempted=?,content=?,target=?,target_likes=?,target_content=? WHERE id=? AND state='queued'").run(action,claimTime,text,target,targetLikes ?? null,targetContent ?? null,item.id);
       if (!claim.changes) return;
       const current = this.store.settings(); current.lastContent = text; current.nextInteraction = claimTime + this.wait(current.limits.waitMin,current.limits.waitMax); this.store.saveSettings(current);
       const receipt = await this.bili.post(item.bvid,text,rpid);
       this.store.db.prepare("UPDATE interactions SET state='succeeded',receipt=? WHERE id=?").run(JSON.stringify(receipt ?? {}),item.id);
       const successful = this.store.settings(); successful.failures = 0; successful.retryAt = 0; this.store.saveSettings(successful);
-      this.log(topic,action,'成功',{ ...details, content: text, target, targetLikes });
+      this.log(topic,action,'成功',{ ...details, content: text, target, targetLikes, targetContent });
     } catch (error) {
       this.store.db.prepare("UPDATE interactions SET state='failed' WHERE id=? AND state='claimed'").run(item.id);
-      this.fail(error,topic,{ ...details, content: text, target, targetLikes },'interaction');
+      this.fail(error,topic,{ ...details, content: text, target, targetLikes, targetContent },'interaction');
     }
   }
   async close() { clearInterval(this.timer); await this.pause('服务停止'); }

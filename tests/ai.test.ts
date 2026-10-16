@@ -277,6 +277,17 @@ test('AI reply filtering excludes pinned, special, own, ad, insult, contact and 
   }
 });
 
+test('an AI reply keeps the text of the comment the model chose for local review', async t => {
+  const m = await model(t, (_body, response, index) => answer(response, index === 0 ? { action: 'interact', reason: '适合与普通用户交流' } : { text: '窗户比例确实讲究', rpid: 10 }));
+  const f = fixture(t, m.ai, { writingMode: 'ai', aiInteraction: 'reply' });
+  f.bili.replies = [ordinary(9, '屋顶配色很舒服', 300), ordinary(10, '窗户比例也很讲究', 200)];
+  await f.scheduler.run(); await f.scheduler.tick(); f.advance(); await f.scheduler.tick();
+  assert.deepEqual(f.bili.writes, [{ bvid: 'BV1000000001', text: '窗户比例确实讲究', rpid: 10 }]);
+  const sent = f.store.activity('reply')[0];
+  assert.equal(sent.target, '假用户10'); assert.equal(sent.targetLikes, 200); assert.equal(sent.targetContent, '窗户比例也很讲究');
+  assert.equal(f.store.recentComments()[0].targetContent, '窗户比例也很讲究');
+});
+
 test('no safe reply candidate or model choosing outside candidates skips without replay', async t => {
   for (const empty of [true, false]) {
     const m = await model(t, (_body, response, index) => answer(response, index === 0 ? { action: 'reply', reason: '适合与普通用户交流' } : { text: '这个建议很实用', rpid: 999 }));
