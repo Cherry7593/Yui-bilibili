@@ -4,7 +4,7 @@
 
 ## 项目定位与取证入口
 
-Yui-bilibili 是单账号、单机、低频的 Bilibili 巡逻工具，不是全站采集器或多账号运营平台。现有架构为 TypeScript + Fastify + React + SQLite，实际 Bilibili 调用通过 Python stdio MCP 桥接。
+Yui Comment（仓库名 `Yui-bilibili`）是单账号、单机、低频的 Bilibili 巡逻工具，不是全站采集器或多账号运营平台。现有架构为 TypeScript + Fastify + React + SQLite，实际 Bilibili 调用通过 Python stdio MCP 桥接。
 
 开始任务前按需阅读：
 

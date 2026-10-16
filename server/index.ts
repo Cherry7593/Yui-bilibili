@@ -15,7 +15,7 @@ if ([3000,8010,8787,8080,25566,5432].includes(port)) throw new Error('该端口�
 const host = process.env.HOST ?? '127.0.0.1';
 await app.listen({ port, host });
 scheduler.startTimer();
-console.log(`Yui-bilibili ready: http://${host}:${port}; scheduler Paused`);
+console.log(`Yui Comment ready: http://${host}:${port}; scheduler Paused`);
 let stopping = false;
 async function stop() {
   if (stopping) return;

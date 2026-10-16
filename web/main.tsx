@@ -86,8 +86,8 @@ function App() {
     finally { setBusy(false); }
   };
   return <div className="shell">
-    <aside><a className="brand" href="/dashboard">Yui<span>bilibili patrol</span></a><div className="nav-label">工作空间</div><nav>{Object.entries(pages).map(([key,label],index) => <a key={key} href={`/${key}`} className={page === key ? 'selected' : ''} onClick={event => { event.preventDefault(); go(key as Page); }}><span>0{index+1}</span>{label}</a>)}</nav><div className="sidebar-bottom"><span className={`dot ${state?.settings.running ? 'running' : ''}`} />{state?.settings.running ? '巡逻中' : '已暂停'}<button onClick={() => setDark(!dark)}>{dark ? '浅色模式' : '深色模式'}</button></div></aside>
-    <main><header><div><div className="eyebrow">YUI / {page.toUpperCase()}</div><h1>{pages[page]}</h1></div>{state && <button disabled={busy} className={state.settings.running ? '' : 'primary'} onClick={() => { void mutate('/scheduler','POST',{ running: !state.settings.running },state.settings.running ? '已暂停巡逻' : '已启动巡逻').catch(() => {}); }}>{state.settings.running ? '暂停巡逻' : '启动巡逻'}</button>}</header>
+    <aside><a className="brand" href="/dashboard"><img src="/logo.png" alt="" width="40" height="40" /><span className="brand-text"><strong>Yui Comment</strong><span className="platform">bilibili</span></span></a><div className="nav-label">工作空间</div><nav>{Object.entries(pages).map(([key,label],index) => <a key={key} href={`/${key}`} className={page === key ? 'selected' : ''} onClick={event => { event.preventDefault(); go(key as Page); }}><span>0{index+1}</span>{label}</a>)}</nav><div className="sidebar-bottom"><span className={`dot ${state?.settings.running ? 'running' : ''}`} />{state?.settings.running ? '巡逻中' : '已暂停'}<button onClick={() => setDark(!dark)}>{dark ? '浅色模式' : '深色模式'}</button></div></aside>
+    <main><header><div><div className="eyebrow">YUI COMMENT / {page.toUpperCase()}</div><h1>{pages[page]}</h1></div>{state && <button disabled={busy} className={state.settings.running ? '' : 'primary'} onClick={() => { void mutate('/scheduler','POST',{ running: !state.settings.running },state.settings.running ? '已暂停巡逻' : '已启动巡逻').catch(() => {}); }}>{state.settings.running ? '暂停巡逻' : '启动巡逻'}</button>}</header>
       {!state ? <p>正在连接本机服务…</p> : <>
         {!state.settings.account.loggedIn && <div className="warning">{state.settings.account.message} · {state.settings.account.message === '登录状态待检查' ? '启动后会自动检查，稍候即可。' : '请到设置登录；未登录不会互动。'}</div>}
         {state.settings.account.loggedIn && state.settings.account.renewal?.status === 'failed' && <div className="warning">登录自动续期失败，当前登录仍可用，12 小时后重试；若持续失败请到设置重新扫码登录。</div>}
@@ -97,7 +97,7 @@ function App() {
         {page === 'activity' && <Activities />}
         {page === 'settings' && <Settings state={state} mutate={mutate} refresh={refresh} busy={busy} />}
       </>}
-      <footer>Yui-bilibili · 低频巡逻，安全优先 · V1</footer>
+      <footer>Yui Comment · 低频巡逻，安全优先 · V1</footer>
     </main>
     <div className="toasts" aria-live="polite">{toasts.map(toast => <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />)}</div>
   </div>;
