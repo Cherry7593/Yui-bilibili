@@ -12,6 +12,7 @@ test('static SPA entry, deep links and assets keep serving while the loopback gu
   await mkdir(join(directory,'dist/assets'),{ recursive:true });
   await writeFile(join(directory,'dist/index.html'),'<html><body><main>Local SPA fixture</main></body></html>');
   await writeFile(join(directory,'dist/assets/app.css'),'body { color: #111; }');
+  await writeFile(join(directory,'dist/logo.png'),Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]));
   const store = new Store(':memory:');
   const bili: ApplicationBilibili = {
     async checkLogin() { throw new Error('Static test never checks Bilibili'); }, async search() { throw new Error('Not used'); }, async comments() { throw new Error('Not used'); },
@@ -27,6 +28,9 @@ test('static SPA entry, deep links and assets keep serving while the loopback gu
     assert.equal(deep.statusCode,200); assert.equal(deep.body,entry.body);
     const asset = await app.inject({ method:'GET',url:'/assets/app.css' });
     assert.equal(asset.statusCode,200); assert.match(String(asset.headers['content-type']),/text\/css/);
+    // web/public files (logo, favicon) land at the dist root and must not fall through to the SPA entry.
+    const logo = await app.inject({ method:'GET',url:'/logo.png' });
+    assert.equal(logo.statusCode,200); assert.match(String(logo.headers['content-type']),/image\/png/);
     const denied = await app.inject({ method:'GET',url:'/assets/app.css',headers:{ host:'external.invalid' } });
     assert.equal(denied.statusCode,403);
     const missing = await app.inject({ method:'GET',url:'/api/nonexistent' }); assert.equal(missing.statusCode,404);

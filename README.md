@@ -1,9 +1,12 @@
-# Yui-bilibili
+<img src="web/public/logo.png" width="88" alt="Yui Comment logo">
 
-**在本机运行的 Bilibili 低频巡逻工具：按关键词发现视频，在严格限额下使用模板或可选 AI 进行评论与回复。**
+# Yui Comment
+
+**在本机运行的 Bilibili 低频评论巡逻工具：按关键词发现视频，在严格限额下使用模板或可选 AI 进行评论与回复。**
 
 单账号、单进程、本地优先。不是全站采集器，也不是批量营销或多账号运营平台。
 
+![Platform Bilibili](https://img.shields.io/badge/Platform-Bilibili-00A1D6?logo=bilibili&logoColor=white)
 ![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-339933?logo=nodedotjs&logoColor=white)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![License GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
@@ -182,7 +185,7 @@ Node 测试使用 `node:test`，Python 测试不包含在 `npm test` 内。测�
 
 ```text
 server/                 Fastify API、SQLite、调度、账号与 AI
-web/                    React 中文界面与样式
+web/                    React 中文界面与样式；public/ 为 logo 与 favicon
 bridge/server.py        Python MCP 本地适配与写锁
 vendor/bilibili-mcp/    固定版本上游源码及 MIT 许可证
 scripts/                上游受控重导入脚本
